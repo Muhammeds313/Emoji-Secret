@@ -1,0 +1,246 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emoji Secret 🔐</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:25px 15px;background:linear-gradient(140deg,#100d20,#302044,#17152e);color:#fff;font-family:Arial,sans-serif}
+main{max-width:650px;margin:35px auto;background:#211b35;padding:25px;border-radius:22px;border:1px solid #51416d;box-shadow:0 15px 45px #0006}
+h1{text-align:center;color:#f5a8d9;font-size:32px}
+.sub{text-align:center;color:#c4b8d7}
+.tabs{display:flex;gap:10px;margin:25px 0}
+button{cursor:pointer;border:0;border-radius:10px;padding:13px;font-weight:bold}
+.tabs button{flex:1;background:#39304e;color:white}
+.tabs button.active,.action{background:linear-gradient(100deg,#e28dc5,#9d8af5);color:#20132e}
+label{display:block;margin:18px 0 8px;font-weight:bold}
+textarea,input{width:100%;padding:14px;border:1px solid #615278;border-radius:10px;background:#130f22;color:white;font:inherit}
+textarea{height:220px;resize:vertical}
+.action{width:100%;margin-top:18px;font-size:16px}
+.result{margin-top:20px;padding:18px;background:#130f22;border:1px solid #665485;border-radius:12px;text-align:center;overflow-wrap:anywhere}
+.code{font-size:32px;line-height:1.8;letter-spacing:3px}
+.copy{background:#403653;color:white;margin-top:10px}
+.message{white-space:pre-wrap;text-align:left;line-height:1.7;overflow-wrap:anywhere}
+.hidden{display:none}
+#status{min-height:25px;margin-top:15px;color:#f5a8d9;text-align:center}
+small{display:block;color:#c2b7d2;margin-top:7px;line-height:1.5}
+footer{text-align:center;color:#b7a9ca;font-size:12px;margin-top:22px}
+</style>
+</head>
+<body>
+<main>
+<h1>🔐 Emoji Secret</h1>
+<p class="sub">Your words. Your password. Your secret.</p>
+
+<div class="tabs">
+<button id="sendTab" class="active">Create Secret 💌</button>
+<button id="openTab">Unlock Secret 🔓</button>
+</div>
+
+<section id="sendView">
+<label>Your Secret Message</label>
+<textarea id="message" maxlength="30000" placeholder="Write your message here..."></textarea>
+<small>Write your long message here. It will be encrypted in your browser.</small>
+
+<label>Create Password</label>
+<input id="password" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+
+<label>Confirm Password</label>
+<input id="confirm" type="password" autocomplete="new-password" placeholder="Enter password again">
+
+<button class="action" id="create">Generate Secret Emoji ✨</button>
+
+<div id="created" class="result hidden">
+<p>Your Secret Emoji Code</p>
+<div class="code" id="emojiCode"></div>
+<button class="copy" id="copy">Copy Emoji Code</button>
+<small>Send the emoji code and password separately. Anyone with both can unlock the message.</small>
+</div>
+</section>
+
+<section id="openView" class="hidden">
+<label>Paste Emoji Code</label>
+<input id="codeInput" placeholder="Paste your emoji code">
+
+<label>Enter Password</label>
+<input id="passwordInput" type="password" autocomplete="current-password" placeholder="Your secret password">
+
+<button class="action" id="unlock">Unlock Message 🔓</button>
+
+<div id="opened" class="result hidden">
+<h3>Your Secret Message ❤️</h3>
+<div class="message" id="messageOutput"></div>
+</div>
+</section>
+
+<div id="status" role="status" aria-live="polite"></div>
+<small>Privacy: Messages are encrypted in your browser before being stored. No AI is used to read your message. Keep your password safe.</small>
+<footer>Made with ❤️ · Emoji Secret</footer>
+</main>
+
+<script>
+const SUPABASE_URL = "https://mblxukettspwtevihluk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_QupO_On1jIyvaIf8pF2geQ_QHKvLkNq";
+
+const $ = id => document.getElementById(id);
+const alphabet = ["😀","😎","🥳","😍","🤩","🦊","🐼","🐸","🐯","🦄","🌈","⭐","🌙","☀️","🍀","🍓","🍉","🍒","🍍","🥑","⚽","🎧","🎸","🎨","🚀","🪐","🔥","💎","🧸","🎁","💌","🔐"];
+
+function status(message){$("status").textContent=message;}
+
+function randomCode(){
+ const values=new Uint32Array(8);
+ crypto.getRandomValues(values);
+ return [...values].map(v=>alphabet[v%alphabet.length]).join("");
+}
+
+function toBase64(buffer){
+ const bytes=new Uint8Array(buffer);
+ let binary="";
+ for(let i=0;i<bytes.length;i+=8192){
+  binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+ }
+ return btoa(binary);
+}
+
+function fromBase64(value){
+ return Uint8Array.from(atob(value),c=>c.charCodeAt(0));
+}
+
+async function deriveKey(password,salt){
+ const material=await crypto.subtle.importKey(
+  "raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveKey"]
+ );
+ return crypto.subtle.deriveKey(
+  {name:"PBKDF2",salt,iterations:310000,hash:"SHA-256"},
+  material,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]
+ );
+}
+
+async function api(path,options={}){
+ const response=await fetch(SUPABASE_URL+"/rest/v1/"+path,{
+  ...options,
+  headers:{
+   apikey:SUPABASE_KEY,
+   "Content-Type":"application/json",
+   ...(options.headers||{})
+  }
+ });
+ if(!response.ok){
+  const detail=await response.text();
+  throw new Error("Database error ("+response.status+"): "+detail);
+ }
+ return response;
+}
+
+function switchTab(open){
+ $("sendView").classList.toggle("hidden",open);
+ $("openView").classList.toggle("hidden",!open);
+ $("sendTab").classList.toggle("active",!open);
+ $("openTab").classList.toggle("active",open);
+ $("created").classList.add("hidden");
+ $("opened").classList.add("hidden");
+ status("");
+}
+$("sendTab").onclick=()=>switchTab(false);
+$("openTab").onclick=()=>switchTab(true);
+
+$("create").onclick=async()=>{
+ const message=$("message").value;
+ const password=$("password").value;
+ const confirm=$("confirm").value;
+
+ if(!message.trim())return status("Please write your message.");
+ if(password.length<8)return status("Password must have at least 8 characters.");
+ if(password!==confirm)return status("Passwords do not match.");
+
+ $("create").disabled=true;
+ status("Encrypting your message...");
+
+ try{
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await deriveKey(password,salt);
+  const encrypted=await crypto.subtle.encrypt(
+   {name:"AES-GCM",iv},key,new TextEncoder().encode(message)
+  );
+
+  let saved=false;
+  let code="";
+  for(let attempt=0;attempt<5;attempt++){
+   code=randomCode();
+   try{
+    await api("secrets",{
+     method:"POST",
+     headers:{"Prefer":"return=minimal"},
+     body:JSON.stringify({
+      emoji_code:code,
+      ciphertext:toBase64(encrypted),
+      salt:toBase64(salt),
+      iv:toBase64(iv)
+     })
+    });
+    saved=true;
+    break;
+   }catch(error){
+    if(!String(error.message).includes("(409)") || attempt===4)throw error;
+   }
+  }
+
+  if(!saved)throw new Error("Could not create a unique emoji code.");
+  $("emojiCode").textContent=code;
+  $("created").classList.remove("hidden");
+  status("Secret created successfully! ❤️");
+ }catch(error){
+  status(error.message);
+ }finally{
+  $("create").disabled=false;
+ }
+};
+
+$("copy").onclick=async()=>{
+ try{
+  await navigator.clipboard.writeText($("emojiCode").textContent);
+  status("Emoji code copied!");
+ }catch{
+  status("Please copy the emoji code manually.");
+ }
+};
+
+$("unlock").onclick=async()=>{
+ const code=$("codeInput").value.trim();
+ const password=$("passwordInput").value;
+ if(!code||!password)return status("Enter both emoji code and password.");
+
+ $("unlock").disabled=true;
+ status("Finding your secret...");
+
+ try{
+  const response=await api("rpc/get_secret_by_emoji",{
+   method:"POST",
+   body:JSON.stringify({p_emoji_code:code})
+  });
+  const rows=await response.json();
+  if(!rows.length)throw new Error("Secret not found. Check your emoji code.");
+
+  const item=rows[0];
+  const key=await deriveKey(password,fromBase64(item.salt));
+  const decrypted=await crypto.subtle.decrypt(
+   {name:"AES-GCM",iv:fromBase64(item.iv)},
+   key,fromBase64(item.ciphertext)
+  );
+
+  $("messageOutput").textContent=new TextDecoder().decode(decrypted);
+  $("opened").classList.remove("hidden");
+  status("Message unlocked successfully! ❤️");
+ }catch(error){
+  $("opened").classList.add("hidden");
+  status(error.name==="OperationError"?"Wrong password or damaged message.":error.message);
+ }finally{
+  $("unlock").disabled=false;
+ }
+};
+</script>
+</body>
+</html>
